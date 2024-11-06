@@ -1,7 +1,6 @@
 import requests
 from requests.auth import HTTPBasicAuth
 from queue import Queue
-import threading
 import time
 
 # 用户的API账号和密码列表
@@ -18,7 +17,6 @@ accounts = [
     ("GA1A711D09", "dddd1111")
 ]
 
-
 # 创建一个账号队列
 account_queue = Queue()
 for account in accounts:
@@ -27,22 +25,19 @@ for account in accounts:
 # 请求URL
 url_odds = "https://api.ps3838.com/v2/line"
 
-# 请求参数（根据需要修改）
-params = {
-    "sportId": 29,        # 示例：Soccer 的 sportId
-    "leagueId": 1913,     # 示例联赛ID
-    "eventId": 1600112155,  # 示例赛事ID
-    "periodNumber": 0,    # 0 表示整场比赛
-    "betType": "MONEYLINE",  # 示例：获取胜负的赔率
-    "oddsFormat": "DECIMAL",  # 赔率格式为欧洲十进制
-    "team": "TEAM1"  # 必填参数，指定投注的队伍
-}
-
-def fetch_odds():
+def fetch_odds(event_id, sport_id=4):
+    """获取实时赔率数据"""
     while True:
         start_time = time.time()
-        # 从队列中获取一个账号
         username, password = account_queue.get()
+        params = {
+            "sportId": sport_id,
+            "eventId": event_id,
+            "periodNumber": 0,
+            "betType": "MONEYLINE",
+            "oddsFormat": "DECIMAL"
+        }
+
         try:
             response = requests.get(url_odds, params=params, auth=HTTPBasicAuth(username, password))
             if response.status_code == 200:
@@ -53,14 +48,9 @@ def fetch_odds():
         except requests.exceptions.RequestException as e:
             print(f"账号 {username} 请求发生错误: {e}")
         finally:
-            # 将账号放回队列末尾
             account_queue.put((username, password))
-            # 计算请求结束的时间
-            end_time = time.time()
             # 确保每次请求之间的间隔为1秒
-            elapsed_time = end_time - start_time
-            sleep_time = max(1 - elapsed_time, 0)
-            time.sleep(sleep_time)
+            elapsed_time = time.time() - start_time
+            time.sleep(max(1 - elapsed_time, 0))
 
-# 启动获取数据的主线程
-fetch_odds()
+# 由于fetch_odds的调用是在fetch_1_net.py中完成，因此此文件不需要示例调用部分
