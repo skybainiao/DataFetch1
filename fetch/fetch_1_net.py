@@ -1,14 +1,16 @@
-from datetime import datetime, timedelta, time
+from datetime import time, datetime
+import threading
 import time
-from datetime import datetime
 import pytz
 import requests
 from requests.auth import HTTPBasicAuth
 
+
 # 使用固定的API账号和密码
 username = "E01AA0NDM1"
 password = "dddd1111"
-
+# 基础URL
+base_url = "https://api.ps3838.com"
 
 # 获取所有运动类型
 def get_all_sports():
@@ -26,7 +28,6 @@ def get_all_sports():
     except requests.exceptions.RequestException as e:
         print(f"账号 {username} 请求发生错误: {e}")
         return None
-
 
 # 通过运动类型ID获取所有联赛
 def get_leagues_by_sport(sport_id):
@@ -46,7 +47,6 @@ def get_leagues_by_sport(sport_id):
         print(f"账号 {username} 请求发生错误: {e}")
         return None
 
-
 def find_denmark_superliga():
     """查找足球中 Denmark - Superliga 联赛"""
     sport_id = 29  # 足球的运动类型ID
@@ -62,7 +62,6 @@ def find_denmark_superliga():
     else:
         print("获取联赛信息失败")
         return None
-
 
 def get_live_or_upcoming_open_fixtures(sport_id, league_id):
     """获取某个联赛下的所有正在进行或即将开始且状态为 'O' 的比赛"""
@@ -85,8 +84,6 @@ def get_live_or_upcoming_open_fixtures(sport_id, league_id):
 
         return None
 
-
-# 新增方法：获取所有足球联赛的未结算比赛
 def get_all_unsettled_fixtures(sport_id):
     """获取所有足球联赛的未结算比赛"""
     all_unsettled_fixtures = []
@@ -102,7 +99,6 @@ def get_all_unsettled_fixtures(sport_id):
 
     print(f"所有未结算比赛总数: {len(all_unsettled_fixtures)}")
     return all_unsettled_fixtures
-
 
 def get_today_open_fixtures(sport_id):
     """获取某个运动类型下的所有今日开放投注的比赛"""
@@ -131,25 +127,16 @@ def get_today_open_fixtures(sport_id):
     return all_today_open_fixtures
 
 
-def get_in_running_football_events():
+
+def v2running():
     """获取足球进行中的赛事"""
     url = "https://api.ps3838.com/v2/inrunning"
-    params = {
-        "sportId": 29  # 足球的运动类型ID
-    }
-
     try:
-        response = requests.get(url, params=params, auth=HTTPBasicAuth(username, password))
-
+        response = requests.get(url, auth=HTTPBasicAuth(username, password))
         if response.status_code == 200:
             running_data = response.json()
-            if 'sports' in running_data and running_data['sports']:
-                football_data = running_data['sports'][0]  # 足球的所有联赛和赛事数据
-                print("进行中的足球赛事数据:", football_data)
-                return football_data
-            else:
-                print("没有进行中的足球赛事。")
-                return None
+            print("进行中的足球赛事数据:", running_data)
+            return running_data
         else:
             print(f"请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
             return None
@@ -158,10 +145,187 @@ def get_in_running_football_events():
         print(f"请求发生错误: {e}")
         return None
 
+def getFootball_today_info():
+    """
+    获取所有足球联赛的今日滚球比赛，并分类显示每个联赛下的比赛详细信息，包括主客队名称。
+    """
+    url_inrunning = f"{base_url}/v2/inrunning"
+    url_fixtures = f"{base_url}/v3/fixtures"
 
-# 基础URL
-base_url = "https://api.ps3838.com"
+    try:
+        # 第一步：获取今日进行中的比赛信息
+        response_inrunning = requests.get(url_inrunning, auth=HTTPBasicAuth(username, password))
 
+        if response_inrunning.status_code == 200:
+            inrunning_data = response_inrunning.json()
+
+            if 'sports' in inrunning_data and inrunning_data['sports']:
+                football_data = inrunning_data['sports'][0]
+                leagues = football_data.get('leagues', [])
+
+                all_event_ids = []
+                league_id_name_map = {}
+
+                for league in leagues:
+                    league_id = league.get('id', 'Unknown League ID')
+                    league_name = league.get('name', 'Unknown League')
+                    league_id_name_map[league_id] = league_name
+                    events = league.get('events', [])
+                    event_ids = [event.get('id') for event in events if event.get('id')]
+
+                    all_event_ids.extend(event_ids)
+
+                if not all_event_ids:
+                    print("没有进行中的足球赛事。")
+                    return
+
+                # 第二步：一次性获取所有比赛的详细信息
+                params = {
+                    "sportId": 29,  # 足球
+                    "eventIds": ','.join(map(str, all_event_ids))
+                }
+                response_fixtures = requests.get(url_fixtures, params=params,
+                                                 auth=HTTPBasicAuth(username, password))
+
+                if response_fixtures.status_code == 200:
+                    fixtures_data = response_fixtures.json()
+
+                    if 'league' in fixtures_data:
+                        leagues_data = fixtures_data['league']
+                        for league_data in leagues_data:
+                            league_id = league_data.get('id', 'Unknown League ID')
+                            league_name = league_data.get('name', 'Unknown League')
+
+                            print(f"\nLeague: {league_name} (League ID: {league_id})")
+
+                            for event in league_data.get('events', []):
+                                home_team = event.get('home', 'Unknown Home Team')
+                                away_team = event.get('away', 'Unknown Away Team')
+                                start_time = event.get('starts', 'Unknown Start Time')
+                                event_id = event.get('id', 'Unknown ID')
+                                print(f"  Match: {home_team} vs {away_team} | Start: {start_time} (Event ID: {event_id})")
+                    else:
+                        print("没有比赛的详细信息。")
+                else:
+                    print(f"获取比赛详情失败，状态码: {response_fixtures.status_code}")
+            else:
+                print("没有进行中的足球赛事。")
+        else:
+            print(f"请求滚球比赛数据失败，状态码: {response_inrunning.status_code}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"请求发生错误: {e}")
+def getFootball_today_infoForServer():
+    """
+    获取所有足球联赛的今日滚球比赛，并分类返回每个联赛下的比赛详细信息，包括主客队名称。
+    """
+    url_inrunning = f"{base_url}/v2/inrunning"
+    url_fixtures = f"{base_url}/v3/fixtures"
+
+    try:
+        # 第一步：获取今日进行中的比赛信息
+        response_inrunning = requests.get(url_inrunning, auth=HTTPBasicAuth(username, password))
+
+        if response_inrunning.status_code == 200:
+            inrunning_data = response_inrunning.json()
+
+            if 'sports' in inrunning_data and inrunning_data['sports']:
+                football_data = inrunning_data['sports'][0]
+                leagues = football_data.get('leagues', [])
+
+                all_event_ids = []
+                league_id_name_map = {}
+
+                for league in leagues:
+                    league_id = league.get('id', 'Unknown League ID')
+                    league_name = league.get('name', 'Unknown League')
+                    league_id_name_map[league_id] = league_name
+                    events = league.get('events', [])
+                    event_ids = [event.get('id') for event in events if event.get('id')]
+
+                    all_event_ids.extend(event_ids)
+
+                if not all_event_ids:
+                    print("没有进行中的足球赛事。")
+                    return {}
+
+                # 第二步：一次性获取所有比赛的详细信息
+                params = {
+                    "sportId": 29,  # 足球
+                    "eventIds": ','.join(map(str, all_event_ids))
+                }
+                response_fixtures = requests.get(url_fixtures, params=params,
+                                                 auth=HTTPBasicAuth(username, password))
+
+                if response_fixtures.status_code == 200:
+                    fixtures_data = response_fixtures.json()
+
+                    if 'league' in fixtures_data:
+                        leagues_data = fixtures_data['league']
+                        result = {}
+
+                        for league_data in leagues_data:
+                            league_id = league_data.get('id', 'Unknown League ID')
+                            league_name = league_data.get('name', 'Unknown League')
+
+                            events_list = []
+                            for event in league_data.get('events', []):
+                                match_info = {
+                                    'home_team': event.get('home', 'Unknown Home Team'),
+                                    'away_team': event.get('away', 'Unknown Away Team'),
+                                    'start_time': event.get('starts', 'Unknown Start Time'),
+                                    'event_id': event.get('id', 'Unknown ID')
+                                }
+                                events_list.append(match_info)
+
+                            # 将每个联赛下的比赛信息添加到结果中
+                            result[league_id] = {
+                                'league_name': league_name,
+                                'events': events_list
+                            }
+
+                        return result  # 返回整理好的数据
+                    else:
+                        print("没有比赛的详细信息。")
+                        return {}
+                else:
+                    print(f"获取比赛详情失败，状态码: {response_fixtures.status_code}")
+                    return {}
+            else:
+                print("没有进行中的足球赛事。")
+                return {}
+        else:
+            print(f"请求滚球比赛数据失败，状态码: {response_inrunning.status_code}")
+            return {}
+
+    except requests.exceptions.RequestException as e:
+        print(f"请求发生错误: {e}")
+        return {}
+
+def get_event_details(event_ids,sport_id):
+    """
+    根据Event ID获取比赛详细信息。
+    支持单个或多个Event ID。
+    """
+    url = "https://api.ps3838.com/v3/fixtures"
+
+    # 确保event_ids是一个列表，即使是单个ID
+    if isinstance(event_ids, int):
+        event_ids = [event_ids]
+
+    params = {
+        "sportId": sport_id,  # 足球的运动类型ID
+        "eventIds": ','.join(map(str, event_ids))  # 将Event ID转换为逗号分隔的字符串
+    }
+
+    try:
+        response = requests.get(url, params=params, auth=HTTPBasicAuth(username, password))
+        if response.text != '':
+            print(f"获取到的比赛信息: {response.text}")
+        else:
+            return None
+    except requests.exceptions.RequestException as e:
+        return None
 
 def get_all_odds_and_lines(event_id, sport_id, odds_format="Decimal"):
     """
@@ -179,7 +343,7 @@ def get_all_odds_and_lines(event_id, sport_id, odds_format="Decimal"):
         odds_response = requests.get(odds_endpoint, params=odds_params, auth=HTTPBasicAuth(username, password))
 
         if odds_response.status_code != 200:
-            print(f"获取赔率失败: {odds_response.status_code} - {odds_response.text}")
+
             return None
 
         odds_data = odds_response.json()
@@ -246,168 +410,235 @@ def get_all_odds_and_lines(event_id, sport_id, odds_format="Decimal"):
         pass
 
 
-
-def get_today_soccer_inrunning():
+def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
     """
-    获取所有足球联赛的今日滚球比赛，并显示联赛ID和比赛ID。
+    获取所有足球联赛的今日滚球比赛，包含每场比赛的赔率信息。
+    返回包含比赛和赔率信息的完整数据结构。
     """
-    url = "https://api.ps3838.com/v2/inrunning"
+    url_inrunning = f"{base_url}/v2/inrunning"
+    url_fixtures = f"{base_url}/v3/fixtures"
+    url_odds = f"{base_url}/v3/odds"
 
     try:
-        response = requests.get(url, auth=HTTPBasicAuth(username, password))
+        # 第一步：获取今日进行中的比赛信息
+        response_inrunning = requests.get(url_inrunning, auth=HTTPBasicAuth(username, password))
 
-        if response.status_code == 200:
-            data = response.json()
-
-            if 'sports' in data and data['sports']:
-                football_data = data['sports'][0]  # 获取足球数据
-                leagues = football_data.get('leagues', [])
-
-                for league in leagues:
-                    league_id = league.get('id', 'Unknown League ID')
-                    print(f"League ID: {league_id}")
-
-                    events = league.get('events', [])
-                    for event in events:
-                        event_id = event.get('id', 'Unknown Match ID')
-                        print(f"  Event ID: {event_id}")
-            else:
-                print("没有进行中的足球赛事。")
-        else:
-            print(f"请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
-
-    except requests.exceptions.RequestException as e:
-        print(f"请求发生错误: {e}")
-
-
-def get_league_names():
-    """获取所有足球联赛的名称"""
-    url = f"{base_url}/v3/leagues"
-    params = {"sportId": 29}  # 足球
-    response = requests.get(url, params=params, auth=HTTPBasicAuth(username, password))
-
-    if response.status_code == 200:
-        leagues_data = response.json().get("leagues", [])
-        return {league['id']: league['name'] for league in leagues_data}
-    else:
-        print(f"获取联赛名称失败: {response.status_code} - {response.text}")
-        return {}
-
-
-def get_fixture_names(league_ids):
-    """获取指定联赛的比赛详细信息，包括主队、客队和比赛时间"""
-    url = f"{base_url}/v3/fixtures"
-
-    # 获取北京时间当天的起始时间和结束时间
-    beijing_tz = pytz.timezone('Asia/Shanghai')
-    today_start = int(
-        time.mktime(datetime.now(beijing_tz).replace(hour=0, minute=0, second=0, microsecond=0).timetuple()))
-    today_end = int(
-        time.mktime(datetime.now(beijing_tz).replace(hour=23, minute=59, second=59, microsecond=0).timetuple()))
-
-    params = {
-        "sportId": 29,  # 足球
-        "leagueIds": ','.join(map(str, league_ids)),
-        "since": today_start,  # 北京时间的起点时间
-        "until": today_end  # 北京时间的终点时间
-    }
-
-    response = requests.get(url, params=params, auth=HTTPBasicAuth(username, password))
-
-    if response.status_code == 200:
-        fixtures_data = response.json().get("leagues", [])
-        if not fixtures_data:
-            print("No fixtures available for the given league IDs and time range.")
+        if response_inrunning.status_code != 200:
+            print(f"请求滚球比赛数据失败，状态码: {response_inrunning.status_code}")
             return {}
 
-        fixture_dict = {}
-        for league in fixtures_data:
-            for event in league['events']:
-                fixture_dict[event['id']] = {
-                    "home": event.get('home', 'Unknown Home Team'),
-                    "away": event.get('away', 'Unknown Away Team'),
-                    "start_time": event.get('startTime', 'Unknown Start Time')
+        inrunning_data = response_inrunning.json()
+        sports = inrunning_data.get('sports', [])
+        if not sports:
+            print("没有进行中的足球赛事。")
+            return {}
+
+        football_data = sports[0]
+        leagues = football_data.get('leagues', [])
+
+        # 收集所有进行中的比赛的 event_id
+        all_event_ids = [
+            event.get('id') for league in leagues for event in league.get('events', []) if event.get('id')
+        ]
+
+        if not all_event_ids:
+            print("没有进行中的足球赛事。")
+            return {}
+
+        # 第二步：一次性获取所有比赛的详细信息
+        fixtures_params = {
+            "sportId": 29,  # 足球
+            "eventIds": ','.join(map(str, all_event_ids))
+        }
+        response_fixtures = requests.get(
+            url_fixtures, params=fixtures_params, auth=HTTPBasicAuth(username, password)
+        )
+
+        if response_fixtures.status_code != 200:
+            print(f"获取比赛详情失败，状态码: {response_fixtures.status_code}")
+            return {}
+
+        fixtures_data = response_fixtures.json()
+        leagues_data = fixtures_data.get('league', [])
+        if not leagues_data:
+            print("没有比赛的详细信息。")
+            return {}
+
+        # 第三步：一次性获取所有比赛的赔率信息
+        odds_params = {
+            "sportId": 29,
+            "eventIds": ','.join(map(str, all_event_ids)),
+            "oddsFormat": odds_format
+        }
+        response_odds = requests.get(
+            url_odds, params=odds_params, auth=HTTPBasicAuth(username, password)
+        )
+
+        if response_odds.status_code != 200:
+            print(f"获取赔率信息失败，状态码: {response_odds.status_code}")
+            return {}
+
+        odds_data = response_odds.json()
+        odds_leagues = odds_data.get('leagues', [])
+
+        # 创建一个字典，用于快速查找比赛的赔率信息
+        odds_event_dict = {
+            odds_event.get('id'): odds_event
+            for odds_league in odds_leagues
+            for odds_event in odds_league.get('events', [])
+            if odds_event.get('id')
+        }
+
+        result = {}
+        for league_data in leagues_data:
+            league_id = league_data.get('id', 'Unknown League ID')
+            league_name = league_data.get('name', 'Unknown League')
+
+            events_list = []
+            for event in league_data.get('events', []):
+                event_id = event.get('id', 'Unknown ID')
+                home_team = event.get('home', 'Unknown Home Team')
+                away_team = event.get('away', 'Unknown Away Team')
+                start_time = event.get('starts', 'Unknown Start Time')
+
+                # 获取该比赛的赔率信息
+                odds_info = odds_event_dict.get(event_id, {})
+                periods = odds_info.get('periods', [])
+
+                # 提取需要的赔率信息
+                odds_list = []
+                for period in periods:
+                    period_number = period.get('number')
+                    # 处理让分赔率（SPREAD）
+                    for spread in period.get('spreads', []):
+                        odds_list.append({
+                            'betType': 'SPREAD',
+                            'periodNumber': period_number,
+                            'hdp': spread.get('hdp'),
+                            'homeOdds': spread.get('home'),
+                            'awayOdds': spread.get('away')
+                        })
+
+                    # 处理大小球赔率（TOTAL_POINTS）
+                    for total in period.get('totals', []):
+                        odds_list.append({
+                            'betType': 'TOTAL_POINTS',
+                            'periodNumber': period_number,
+                            'points': total.get('points'),
+                            'overOdds': total.get('over'),
+                            'underOdds': total.get('under')
+                        })
+
+                    # 处理独赢赔率（MONEYLINE）
+                    moneyline = period.get('moneyline', {})
+                    if moneyline:
+                        odds_list.append({
+                            'betType': 'MONEYLINE',
+                            'periodNumber': period_number,
+                            'homeOdds': moneyline.get('home'),
+                            'drawOdds': moneyline.get('draw'),
+                            'awayOdds': moneyline.get('away')
+                        })
+
+                match_info = {
+                    'event_id': event_id,
+                    'home_team': home_team,
+                    'away_team': away_team,
+                    'start_time': start_time,
+                    'odds': odds_list  # 添加赔率信息
                 }
-        return fixture_dict
-    else:
-        print(f"获取比赛名称失败: {response.status_code} - {response.text}")
-        return {}
+                events_list.append(match_info)
 
+            # 将每个联赛下的比赛信息添加到结果中
+            result[league_id] = {
+                'league_name': league_name,
+                'events': events_list
+            }
 
-def display_running_matches():
-    """
-    获取所有足球联赛的今日滚球比赛，并显示联赛名称和比赛队伍。
-    """
-    url = f"{base_url}/v2/inrunning"
-
-    try:
-        response = requests.get(url, auth=HTTPBasicAuth(username, password))
-
-        if response.status_code == 200:
-            data = response.json()
-
-            if 'sports' in data and data['sports']:
-                football_data = data['sports'][0]
-                leagues = football_data.get('leagues', [])
-
-                league_names = get_league_names()  # 获取联赛名称
-                for league in leagues:
-                    league_id = league.get('id', 'Unknown League ID')
-                    league_name = league_names.get(league_id, 'Unknown League')
-                    print(f"League: {league_name}")
-
-                    events = league.get('events', [])
-                    for event in events:
-                        event_id = event.get('id', 'Unknown Event ID')
-                        home_team = event.get('home', 'Unknown Home Team')
-                        away_team = event.get('away', 'Unknown Away Team')
-                        print(f"  Match: {home_team} vs {away_team} (Event ID: {event_id})")
-            else:
-                print("没有进行中的足球赛事。")
-        else:
-            print(f"请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
+        return result  # 返回整理好的数据
 
     except requests.exceptions.RequestException as e:
         print(f"请求发生错误: {e}")
+        return {}
 
 
-def get_event_details(event_ids):
+def refresh_odds_every_second():
     """
-    根据Event ID获取比赛详细信息。
-    支持单个或多个Event ID。
+    每秒刷新一次比赛赔率信息。
     """
-    url = "https://api.ps3838.com/v3/fixtures"
 
-    # 确保event_ids是一个列表，即使是单个ID
-    if isinstance(event_ids, int):
-        event_ids = [event_ids]
+    def fetch_and_process_odds():
+        while True:
+            try:
+                # 获取最新的赔率信息
+                football_data = getFootball_today_info_with_odds_ForServer()
 
-    params = {
-        "sportId": 29,  # 足球的运动类型ID
-        "eventIds": ','.join(map(str, event_ids))  # 将Event ID转换为逗号分隔的字符串
-    }
+                if football_data:
+                    # 在这里处理获取到的数据，例如打印或保存
+                    for league_id, league_info in football_data.items():
+                        league_name = league_info['league_name']
+                        print(f"\n联赛: {league_name} (联赛ID: {league_id})")
+                        events = league_info['events']
+                        for event in events:
+                            event_id = event['event_id']
+                            home_team = event['home_team']
+                            away_team = event['away_team']
+                            start_time = event['start_time']
+                            print(f"  比赛: {home_team} vs {away_team} | 开始时间: {start_time} (比赛ID: {event_id})")
 
+                            # 打印赔率信息
+                            odds_list = event.get('odds', [])
+                            for odds in odds_list:
+                                bet_type = odds.get('betType')
+                                period_number = odds.get('periodNumber')
+                                print(f"    时段: 第{period_number}节, 类型: {bet_type}")
+                                if bet_type == 'SPREAD':
+                                    hdp = odds.get('hdp')
+                                    home_odds = odds.get('homeOdds')
+                                    away_odds = odds.get('awayOdds')
+                                    print(f"      让分盘口: {hdp}, 主队赔率: {home_odds}, 客队赔率: {away_odds}")
+                                elif bet_type == 'TOTAL_POINTS':
+                                    points = odds.get('points')
+                                    over_odds = odds.get('overOdds')
+                                    under_odds = odds.get('underOdds')
+                                    print(f"      大小球盘口: {points}, 大赔率: {over_odds}, 小赔率: {under_odds}")
+                                elif bet_type == 'MONEYLINE':
+                                    home_ml = odds.get('homeOdds')
+                                    draw_ml = odds.get('drawOdds')
+                                    away_ml = odds.get('awayOdds')
+                                    print(f"      独赢赔率 - 主胜: {home_ml}, 平局: {draw_ml}, 客胜: {away_ml}")
+                else:
+                    print("未获取到足球比赛数据。")
+
+                # 等待一秒钟
+                time.sleep(1)
+            except KeyboardInterrupt:
+                print("停止刷新赔率信息。")
+                break
+            except Exception as e:
+                print(f"发生错误: {e}")
+                # 可以在此处添加日志记录或其他错误处理
+                time.sleep(1)
+
+    # 创建并启动线程
+    refresh_thread = threading.Thread(target=fetch_and_process_odds)
+    refresh_thread.daemon = True  # 设置为守护线程，主程序退出时线程自动退出
+    refresh_thread.start()
+
+    # 主线程保持运行
     try:
-        response = requests.get(url, params=params, auth=HTTPBasicAuth(username, password))
-        if response.text != '':
-            print(f"获取到的比赛信息: {response.text}")
-        else:
-            return None
-    except requests.exceptions.RequestException as e:
-        return None
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("主程序已停止。")
 
 # 调用方法
+'''
+v2running()
+getFootball_today_info()
+get_event_details(event,29)
+'''
 
-
-# 调用方法
-get_in_running_football_events()
-display_running_matches()
-
-
-
-events_to_check = [1600298676,1600298675,1600352129,1600352131]
-for event in events_to_check:
-    get_event_details(event)
-
-    get_all_odds_and_lines(event, 29)
+if __name__ == "__main__":
+    refresh_odds_every_second()
 
