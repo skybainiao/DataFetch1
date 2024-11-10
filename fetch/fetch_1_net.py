@@ -1,9 +1,11 @@
 from datetime import time, datetime
-import threading
-import time
 import pytz
 import requests
 from requests.auth import HTTPBasicAuth
+import threading
+import time
+import csv
+
 
 
 # 使用固定的API账号和密码
@@ -125,8 +127,6 @@ def get_today_open_fixtures(sport_id):
 
     print(f"所有今日开放投注比赛总数: {len(all_today_open_fixtures)}")
     return all_today_open_fixtures
-
-
 
 def v2running():
     """获取足球进行中的赛事"""
@@ -410,6 +410,128 @@ def get_all_odds_and_lines(event_id, sport_id, odds_format="Decimal"):
         pass
 
 
+def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
+    """
+    获取所有足球联赛的今日滚球比赛，包含每场比赛的赔率信息。
+    返回包含比赛和赔率信息的完整数据结构。
+    """
+    url_inrunning = f"{base_url}/v2/inrunning"
+    url_fixtures = f"{base_url}/v3/fixtures"
+    url_odds = f"{base_url}/v3/odds"
+
+    try:
+        # 第一步：获取今日进行中的比赛信息
+        response_inrunning = requests.get(url_inrunning, auth=HTTPBasicAuth(username, password))
+        response_inrunning.raise_for_status()
+
+        inrunning_data = response_inrunning.json()
+        sports = inrunning_data.get('sports', [])
+        if not sports:
+            print("没有进行中的足球赛事。")
+            return []
+
+        football_data = sports[0]
+        leagues = football_data.get('leagues', [])
+
+        # 收集所有进行中的比赛的 event_id
+        all_event_ids = [
+            event.get('id') for league in leagues for event in league.get('events', []) if event.get('id')
+        ]
+
+        if not all_event_ids:
+            print("没有进行中的足球赛事。")
+            return []
+
+        # 第二步：一次性获取所有比赛的详细信息
+        fixtures_params = {
+            "sportId": 29,  # 足球
+            "eventIds": ','.join(map(str, all_event_ids))
+        }
+        response_fixtures = requests.get(
+            url_fixtures, params=fixtures_params, auth=HTTPBasicAuth(username, password)
+        )
+        response_fixtures.raise_for_status()
+
+        fixtures_data = response_fixtures.json()
+        leagues_data = fixtures_data.get('league', [])
+        if not leagues_data:
+            print("没有比赛的详细信息。")
+            return []
+
+        # 第三步：一次性获取所有比赛的赔率信息
+        odds_params = {
+            "sportId": 29,
+            "eventIds": ','.join(map(str, all_event_ids)),
+            "oddsFormat": odds_format
+        }
+        response_odds = requests.get(
+            url_odds, params=odds_params, auth=HTTPBasicAuth(username, password)
+        )
+        response_odds.raise_for_status()
+
+        odds_data = response_odds.json()
+        odds_leagues = odds_data.get('leagues', [])
+
+        # 创建一个字典，用于快速查找比赛的赔率信息
+        odds_event_dict = {
+            odds_event.get('id'): odds_event
+            for odds_league in odds_leagues
+            for odds_event in odds_league.get('events', [])
+            if odds_event.get('id')
+        }
+
+        # 修改 result 为一个列表，包含所有联赛
+        result = []
+        for league_data in leagues_data:
+            league_name = league_data.get('name', 'Unknown League')
+
+            events_list = []
+            for event in league_data.get('events', []):
+                event_id = event.get('id', 'Unknown ID')
+                home_team = event.get('home', 'Unknown Home Team')
+                away_team = event.get('away', 'Unknown Away Team')
+                start_time = event.get('starts', 'Unknown Start Time')
+
+                # 获取该比赛的赔率信息
+                odds_info = odds_event_dict.get(event_id, {})
+                periods = odds_info.get('periods', [])
+
+                # 提取需要的赔率信息
+                odds_list = []
+                for period in periods:
+                    period_number = period.get('number')
+                    for spread in period.get('spreads', []):
+                        odds_list.append({
+                            'betType': 'SPREAD',
+                            'periodNumber': period_number,
+                            'hdp': spread.get('hdp'),
+                            'homeOdds': spread.get('home'),
+                            'awayOdds': spread.get('away')
+                        })
+
+                match_info = {
+                    'event_id': event_id,
+                    'home_team': home_team,
+                    'away_team': away_team,
+                    'start_time': start_time,
+                    'odds': odds_list
+                }
+                events_list.append(match_info)
+
+            # 将每个联赛信息添加到结果中
+            result.append({
+                'league_name': league_name,
+                'events': events_list
+            })
+
+        print(result)  # 打印完整数据以调试
+        return result  # 返回所有联赛和比赛的完整数据
+
+    except requests.exceptions.RequestException as e:
+        print(f"请求发生错误: {e}")
+        return []
+
+
 def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
     """
     获取所有足球联赛的今日滚球比赛，包含每场比赛的赔率信息。
@@ -554,59 +676,150 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
                 'league_name': league_name,
                 'events': events_list
             }
-
         return result  # 返回整理好的数据
 
     except requests.exceptions.RequestException as e:
         print(f"请求发生错误: {e}")
         return {}
 
-
 def refresh_odds_every_second():
     """
-    每秒刷新一次比赛赔率信息。
+    每秒刷新一次比赛赔率信息，并将数据保存为 CSV 文件。
     """
 
     def fetch_and_process_odds():
+        # 定义 CSV 文件的列名（与您提供的标题一致）
+        header_line = 'league,match_time,home_team,away_team,home_score,away_score,' \
+                      '1 X 2 - 1,1 X 2 - 2,1 X 2 - X,' \
+                      '1H1 X 2 - 1,1H1 X 2 - 2,1H1 X 2 - X,' \
+                      '1HHDP - +0/0.5,1HHDP - -0/0.5,1HHDP - 0,' \
+                      '1HO/U - O,1HO/U - U,BTTS - No,BTTS - Yes,' \
+                      'HDP - +0.5,HDP - +0.5/1,HDP - +0/0.5,HDP - +1,HDP - +1/1.5,' \
+                      'HDP - -0.5,HDP - -0.5/1,HDP - -0/0.5,HDP - -1,HDP - -1/1.5,' \
+                      'HDP - 0,Next Goal - 1,Next Goal - 2,Next Goal - X,' \
+                      'O/E - Even,O/E - Odd,O/U - O,O/U - U,' \
+                      'Team 1 Goals - O,Team 1 Goals - U,Team 2 Goals - O,Team 2 Goals - U'
+
+        columns = header_line.split(',')
+
         while True:
             try:
+                # 初始化数据列表
+                csv_data = []
+
                 # 获取最新的赔率信息
                 football_data = getFootball_today_info_with_odds_ForServer()
 
                 if football_data:
-                    # 在这里处理获取到的数据，例如打印或保存
+                    match_count = 0  # 初始化比赛计数器
+
+                    # 处理获取到的数据，整理成 CSV 格式
                     for league_id, league_info in football_data.items():
                         league_name = league_info['league_name']
-                        print(f"\n联赛: {league_name} (联赛ID: {league_id})")
                         events = league_info['events']
                         for event in events:
+                            match_count += 1  # 增加比赛计数
                             event_id = event['event_id']
                             home_team = event['home_team']
                             away_team = event['away_team']
                             start_time = event['start_time']
-                            print(f"  比赛: {home_team} vs {away_team} | 开始时间: {start_time} (比赛ID: {event_id})")
 
-                            # 打印赔率信息
+                            # 初始化行数据
+                            row = {column: '' for column in columns}
+                            row['league'] = league_name
+                            row['home_team'] = home_team
+                            row['away_team'] = away_team
+                            row['match_time'] = start_time  # 您可以根据需要格式化时间
+
+                            # 假设 event 中包含比分信息
+                            home_score = event.get('home_score')
+                            away_score = event.get('away_score')
+                            if home_score is not None:
+                                row['home_score'] = home_score
+                            if away_score is not None:
+                                row['away_score'] = away_score
+
+                            # 处理赔率信息
                             odds_list = event.get('odds', [])
                             for odds in odds_list:
                                 bet_type = odds.get('betType')
                                 period_number = odds.get('periodNumber')
-                                print(f"    时段: 第{period_number}节, 类型: {bet_type}")
-                                if bet_type == 'SPREAD':
-                                    hdp = odds.get('hdp')
-                                    home_odds = odds.get('homeOdds')
-                                    away_odds = odds.get('awayOdds')
-                                    print(f"      让分盘口: {hdp}, 主队赔率: {home_odds}, 客队赔率: {away_odds}")
-                                elif bet_type == 'TOTAL_POINTS':
-                                    points = odds.get('points')
-                                    over_odds = odds.get('overOdds')
-                                    under_odds = odds.get('underOdds')
-                                    print(f"      大小球盘口: {points}, 大赔率: {over_odds}, 小赔率: {under_odds}")
-                                elif bet_type == 'MONEYLINE':
-                                    home_ml = odds.get('homeOdds')
-                                    draw_ml = odds.get('drawOdds')
-                                    away_ml = odds.get('awayOdds')
-                                    print(f"      独赢赔率 - 主胜: {home_ml}, 平局: {draw_ml}, 客胜: {away_ml}")
+
+                                # 全场独赢赔率
+                                if bet_type == 'MONEYLINE' and period_number == 0:
+                                    row['1 X 2 - 1'] = odds.get('homeOdds', '')
+                                    row['1 X 2 - 2'] = odds.get('awayOdds', '')
+                                    row['1 X 2 - X'] = odds.get('drawOdds', '')
+                                # 半场独赢赔率
+                                elif bet_type == 'MONEYLINE' and period_number == 1:
+                                    row['1H1 X 2 - 1'] = odds.get('homeOdds', '')
+                                    row['1H1 X 2 - 2'] = odds.get('awayOdds', '')
+                                    row['1H1 X 2 - X'] = odds.get('drawOdds', '')
+                                # 全场让分盘口
+                                elif bet_type == 'SPREAD' and period_number == 0:
+                                    hdp = str(odds.get('hdp', ''))
+                                    home_odds = odds.get('homeOdds', '')
+                                    away_odds = odds.get('awayOdds', '')
+                                    # 根据盘口值匹配对应的列
+                                    if hdp == '+0.5':
+                                        row['HDP - +0.5'] = home_odds
+                                    elif hdp == '+0.5/1':
+                                        row['HDP - +0.5/1'] = home_odds
+                                    elif hdp == '+0/0.5':
+                                        row['HDP - +0/0.5'] = home_odds
+                                    elif hdp == '+1':
+                                        row['HDP - +1'] = home_odds
+                                    elif hdp == '+1/1.5':
+                                        row['HDP - +1/1.5'] = home_odds
+                                    elif hdp == '-0.5':
+                                        row['HDP - -0.5'] = home_odds
+                                    elif hdp == '-0.5/1':
+                                        row['HDP - -0.5/1'] = home_odds
+                                    elif hdp == '-0/0.5':
+                                        row['HDP - -0/0.5'] = home_odds
+                                    elif hdp == '-1':
+                                        row['HDP - -1'] = home_odds
+                                    elif hdp == '-1/1.5':
+                                        row['HDP - -1/1.5'] = home_odds
+                                    elif hdp == '0':
+                                        row['HDP - 0'] = home_odds
+                                # 全场大小球
+                                elif bet_type == 'TOTAL_POINTS' and period_number == 0:
+                                    points = str(odds.get('points', ''))
+                                    over_odds = odds.get('overOdds', '')
+                                    under_odds = odds.get('underOdds', '')
+                                    row['O/U - O'] = over_odds
+                                    row['O/U - U'] = under_odds
+                                # 半场让分盘口（1HHDP）
+                                elif bet_type == 'SPREAD' and period_number == 1:
+                                    hdp = str(odds.get('hdp', ''))
+                                    home_odds = odds.get('homeOdds', '')
+                                    # 根据盘口值匹配对应的列
+                                    if hdp == '+0/0.5':
+                                        row['1HHDP - +0/0.5'] = home_odds
+                                    elif hdp == '-0/0.5':
+                                        row['1HHDP - -0/0.5'] = home_odds
+                                    elif hdp == '0':
+                                        row['1HHDP - 0'] = home_odds
+                                # 半场大小球（1HO/U）
+                                elif bet_type == 'TOTAL_POINTS' and period_number == 1:
+                                    over_odds = odds.get('overOdds', '')
+                                    under_odds = odds.get('underOdds', '')
+                                    row['1HO/U - O'] = over_odds
+                                    row['1HO/U - U'] = under_odds
+                                # 您可以根据需要添加更多的赔率类型处理
+
+                            csv_data.append(row)
+
+                    # 将数据写入 CSV 文件
+                    with open('football_odds.csv', 'w', newline='', encoding='utf-8') as csvfile:
+                        writer = csv.DictWriter(csvfile, fieldnames=columns)
+                        # 写入指定的标题行
+                        writer.writeheader()
+                        writer.writerows(csv_data)
+
+                    # 打印提示信息
+                    print(f"数据已写入 football_odds.csv 文件。本次共获取到 {match_count} 场比赛。")
                 else:
                     print("未获取到足球比赛数据。")
 
@@ -632,7 +845,6 @@ def refresh_odds_every_second():
     except KeyboardInterrupt:
         print("主程序已停止。")
 
-# 调用方法
 '''
 v2running()
 getFootball_today_info()
@@ -640,5 +852,6 @@ get_event_details(event,29)
 '''
 
 if __name__ == "__main__":
+    getFootball_today_info_with_odds_ForClient(odds_format="Decimal")
     refresh_odds_every_second()
 
