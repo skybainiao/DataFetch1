@@ -435,15 +435,15 @@ def send_data_to_server(data):
 
 def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
     """
-    获取所有足球联赛的今日滚球比赛，包含每场比赛的赔率信息。
-    返回包含比赛和赔率信息的完整数据结构。
+    获取所有足球联赛的今日滚球比赛，包含每场比赛的赔率信息和比分数据。
+    返回包含比赛、赔率和比分信息的完整数据结构。
     """
     url_inrunning = f"{base_url}/v2/inrunning"
     url_fixtures = f"{base_url}/v3/fixtures"
     url_odds = f"{base_url}/v3/odds"
 
     try:
-        # 第一步：获取今日进行中的比赛信息
+        # 获取今日进行中的比赛信息
         response_inrunning = requests.get(url_inrunning, auth=HTTPBasicAuth(username, password))
 
         if response_inrunning.status_code != 200:
@@ -468,9 +468,9 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
             print("没有进行中的足球赛事。")
             return {}
 
-        # 第二步：一次性获取所有比赛的详细信息
+        # 获取比赛详情
         fixtures_params = {
-            "sportId": 29,  # 足球
+            "sportId": 29,
             "eventIds": ','.join(map(str, all_event_ids))
         }
         response_fixtures = requests.get(
@@ -487,7 +487,7 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
             print("没有比赛的详细信息。")
             return {}
 
-        # 第三步：一次性获取所有比赛的赔率信息
+        # 获取比赛赔率
         odds_params = {
             "sportId": 29,
             "eventIds": ','.join(map(str, all_event_ids)),
@@ -504,7 +504,6 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
         odds_data = response_odds.json()
         odds_leagues = odds_data.get('leagues', [])
 
-        # 创建一个字典，用于快速查找比赛的赔率信息
         odds_event_dict = {
             odds_event.get('id'): odds_event
             for odds_league in odds_leagues
@@ -524,15 +523,16 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
                 away_team = event.get('away', 'Unknown Away Team')
                 start_time = event.get('starts', 'Unknown Start Time')
 
-                # 获取该比赛的赔率信息
+                # 获取赔率和比分信息
                 odds_info = odds_event_dict.get(event_id, {})
                 periods = odds_info.get('periods', [])
+                home_score = odds_info.get('homeScore', '')
+                away_score = odds_info.get('awayScore', '')
 
-                # 提取需要的赔率信息
+                # 提取赔率信息
                 odds_list = []
                 for period in periods:
                     period_number = period.get('number')
-                    # 处理让分赔率（SPREAD）
                     for spread in period.get('spreads', []):
                         odds_list.append({
                             'betType': 'SPREAD',
@@ -541,8 +541,6 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
                             'homeOdds': spread.get('home'),
                             'awayOdds': spread.get('away')
                         })
-
-                    # 处理大小球赔率（TOTAL_POINTS）
                     for total in period.get('totals', []):
                         odds_list.append({
                             'betType': 'TOTAL_POINTS',
@@ -551,8 +549,6 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
                             'overOdds': total.get('over'),
                             'underOdds': total.get('under')
                         })
-
-                    # 处理独赢赔率（MONEYLINE）
                     moneyline = period.get('moneyline', {})
                     if moneyline:
                         odds_list.append({
@@ -568,17 +564,18 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
                     'home_team': home_team,
                     'away_team': away_team,
                     'start_time': start_time,
-                    'odds': odds_list  # 添加赔率信息
+                    'home_score': home_score,
+                    'away_score': away_score,
+                    'odds': odds_list
                 }
                 events_list.append(match_info)
 
-            # 将每个联赛下的比赛信息添加到结果中
-            result = {
+            result[league_id] = {
                 'league_name': league_name,
                 'events': events_list
             }
             print(result)
-        return result  # 返回整理好的数据
+        return result
 
     except requests.exceptions.RequestException as e:
         print(f"请求发生错误: {e}")
@@ -921,4 +918,4 @@ if __name__ == "__main__":
     #get_event_details(1600614449, 29)
     #get_all_odds_and_lines(1600614978, 29, odds_format="Decimal")
     getFootball_today_info_with_odds_ForClient(odds_format="Decimal")
-    refresh_odds_every_second()
+    #refresh_odds_every_second()
