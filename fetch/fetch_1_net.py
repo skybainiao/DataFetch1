@@ -574,7 +574,6 @@ def getFootball_today_info_with_odds_ForClient(odds_format="Decimal"):
                 'league_name': league_name,
                 'events': events_list
             }
-            print(result)
         return result
 
     except requests.exceptions.RequestException as e:
@@ -730,7 +729,6 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
         return {}
 
 
-
 def refresh_odds_every_second():
     """
     每秒刷新一次比赛赔率信息，并将数据分别保存为正常比赛和角球比赛的 CSV 文件。
@@ -835,7 +833,7 @@ def refresh_odds_every_second():
                                 row[bet_type_name] = f"HomeOdds:{home_odds}, DrawOdds:{draw_odds}, AwayOdds:{away_odds}"
 
                         csv_data_normal.append(row)
-
+                        send_data_to_server(csv_data_normal)
                     # 角球比赛数据
                     csv_data_corner = []
                     for league_name, event in corner_data:
@@ -917,5 +915,5 @@ get_event_details(event,29)
 if __name__ == "__main__":
     #get_event_details(1600614449, 29)
     #get_all_odds_and_lines(1600614978, 29, odds_format="Decimal")
-    getFootball_today_info_with_odds_ForClient(odds_format="Decimal")
-    #refresh_odds_every_second()
+    #getFootball_today_info_with_odds_ForClient(odds_format="Decimal")
+    refresh_odds_every_second()
