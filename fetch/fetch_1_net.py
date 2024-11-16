@@ -833,7 +833,8 @@ def refresh_odds_every_second():
                                 row[bet_type_name] = f"HomeOdds:{home_odds}, DrawOdds:{draw_odds}, AwayOdds:{away_odds}"
 
                         csv_data_normal.append(row)
-                        send_data_to_server(csv_data_normal)
+
+
                     # 角球比赛数据
                     csv_data_corner = []
                     for league_name, event in corner_data:
@@ -868,6 +869,8 @@ def refresh_odds_every_second():
 
                         csv_data_corner.append(row)
 
+                    send_data_to_server(csv_data_normal)
+                    #send_data_to_server(csv_data_corner)
                     # 写入正常比赛CSV
                     with open('football_odds_normal.csv', 'w', newline='', encoding='utf-8') as csvfile:
                         writer = csv.DictWriter(csvfile, fieldnames=columns_normal)
@@ -884,13 +887,13 @@ def refresh_odds_every_second():
                 else:
                     print("未获取到足球比赛数据。")
 
-                time.sleep(1)
+                time.sleep(0.7)
             except KeyboardInterrupt:
                 print("停止刷新赔率信息。")
                 break
             except Exception as e:
                 print(f"发生错误: {e}")
-                time.sleep(1)
+                time.sleep(0.7)
 
     refresh_thread = threading.Thread(target=fetch_and_process_odds)
     refresh_thread.daemon = True
@@ -898,7 +901,7 @@ def refresh_odds_every_second():
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(0.7)
     except KeyboardInterrupt:
         print("主程序已停止。")
 
