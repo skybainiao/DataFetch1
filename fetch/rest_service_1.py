@@ -1,5 +1,5 @@
 from flask import Flask, jsonify
-from fetch_1_net import getFootball_today_info_with_odds_ForClient  # 替换为你的实际文件名和方法
+from fetchFunction import getFootball_today_info_with_odds_ForClient  # 替换为你的实际文件名和方法
 
 app = Flask(__name__)
 
