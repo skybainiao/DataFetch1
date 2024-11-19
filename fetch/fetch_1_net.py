@@ -323,7 +323,7 @@ def save_to_csv(data, columns, filename, max_saves=12):
         writer.writerows(all_data)
 
 
-def refresh_odds_every_second():
+def refresh_odds_every_second(t):
     """
     每秒刷新一次比赛赔率信息，并将数据分别保存为正常比赛和角球比赛的 CSV 文件。
     """
@@ -341,13 +341,13 @@ def refresh_odds_every_second():
                     )
                 else:
                     print("目前没有滚球赛事。")
-                time.sleep(0.7)
+                time.sleep(t)
             except KeyboardInterrupt:
                 print("停止刷新赔率信息。")
                 break
             except Exception as e:
                 print(f"发生错误: {e}")
-                time.sleep(0.7)
+                time.sleep(t)
 
     refresh_thread = threading.Thread(target=fetch_and_process_odds)
     refresh_thread.daemon = True
@@ -355,7 +355,7 @@ def refresh_odds_every_second():
 
     try:
         while True:
-            time.sleep(0.7)
+            time.sleep(t)
     except KeyboardInterrupt:
         print("主程序已停止。")
 
@@ -368,7 +368,8 @@ def send_data(data, server_url):
     """
     formatted_data = [
         {
-            "league": league_name,  # 从元组中解包联赛名称
+            "leagueName": league_name,  # 从元组中解包联赛名称
+            "eventId": event['event_id'],
             "matchTime": event['start_time'],
             "homeTeam": event['home_team'],
             "awayTeam": event['away_team'],
@@ -384,7 +385,8 @@ def send_data(data, server_url):
         response = requests.post(server_url, data=json.dumps(formatted_data), headers=headers)
 
         if response.status_code == 200:
-            print("数据成功发送到Java服务器:", response.json())
+            #print("数据成功发送到Java服务器:", response.json())
+            pass
         else:
             print(f"发送数据失败，状态码: {response.status_code}, 响应: {response.text}")
     except requests.exceptions.RequestException as e:
@@ -393,6 +395,5 @@ def send_data(data, server_url):
         print(f"解析服务器响应时发生错误: {e}")
 
 
-
 if __name__ == "__main__":
-    refresh_odds_every_second()
+    refresh_odds_every_second(0.8)
