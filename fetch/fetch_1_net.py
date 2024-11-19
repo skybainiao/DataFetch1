@@ -223,6 +223,7 @@ def process_and_save_data(football_data, normal_csv, corner_csv):
                       'away_score'] + bet_type_columns_corner
 
     send_data(normal_data, "http://localhost:8080/receive_odds_server1")
+    send_data(corner_data, "http://localhost:8080/receive_corner_odds")
     save_to_csv(normal_data, columns_normal, normal_csv)
     save_to_csv(corner_data, columns_corner, corner_csv)
 
