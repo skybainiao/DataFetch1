@@ -217,21 +217,24 @@ def process_and_save_data(football_data, normal_csv, corner_csv):
     bet_type_columns_normal = sorted(all_bet_types_normal, key=lambda x: ('1H' in x, x))
     bet_type_columns_corner = sorted(all_bet_types_corner, key=lambda x: ('1H' in x, x))
 
-    columns_normal = ['league', 'match_time', 'home_team', 'away_team', 'home_score',
-                      'away_score'] + bet_type_columns_normal
-    columns_corner = ['league', 'match_time', 'home_team', 'away_team', 'home_score',
-                      'away_score'] + bet_type_columns_corner
-
     send_data(normal_data, "http://localhost:8080/receive_odds_server1")
     send_data(corner_data, "http://localhost:8080/receive_corner_odds")
+
+    # 添加 'Timestamp' 到列名
+    columns_normal = ['Timestamp', 'league', 'match_time', 'home_team', 'away_team', 'home_score',
+                      'away_score'] + bet_type_columns_normal
+    columns_corner = ['Timestamp', 'league', 'match_time', 'home_team', 'away_team', 'home_score',
+                      'away_score'] + bet_type_columns_corner
+
     save_to_csv(normal_data, columns_normal, normal_csv)
     save_to_csv(corner_data, columns_corner, corner_csv)
 
 
-def save_to_csv(data, columns, filename, max_saves=12):
+
+def save_to_csv(data, columns, filename):
     """
-    保存数据到CSV文件，每次写入数据算作一次保存。
-    动态更新字段，确保文件中最多保留最近 max_saves 次写入数据。
+    保存数据到CSV文件，每次写入数据覆盖之前的内容。
+    确保 'Timestamp' 已包含在 columns 中。
     """
     csv_data = []
 
@@ -240,9 +243,10 @@ def save_to_csv(data, columns, filename, max_saves=12):
     timestamp_row['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     csv_data.append(timestamp_row)
 
-    # 动态更新 columns，确保所有字段都包括
+    # 添加比赛数据
     for league_name, event in data:
         row = {column: '' for column in columns}
+        row['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # 可选：为每行添加时间戳
         row['league'] = league_name
         row['home_team'] = event['home_team']
         row['away_team'] = event['away_team']
@@ -275,53 +279,15 @@ def save_to_csv(data, columns, filename, max_saves=12):
                 bet_type_name = f"{bet_type}_{period_str}"
                 row[bet_type_name] = f"HomeOdds:{home_odds}, DrawOdds:{draw_odds}, AwayOdds:{away_odds}"
 
-            # 动态添加新字段到 columns
-            if bet_type_name not in columns:
-                columns.append(bet_type_name)
-
         csv_data.append(row)
 
-    # 读取现有文件数据
-    if os.path.exists(filename):
-        with open(filename, 'r', encoding='utf-8') as csvfile:
-            existing_data = list(csv.DictReader(csvfile))
-
-        # 动态更新 columns based on existing data
-        for row in existing_data:
-            for key in row.keys():
-                if key not in columns:
-                    columns.append(key)
-
-        # 分离现有数据中的写入次数
-        saves = []
-        current_save = []
-        for row in existing_data:
-            if row['Timestamp']:  # 以时间戳行为分隔标志
-                if current_save:
-                    saves.append(current_save)
-                current_save = [row]
-            else:
-                current_save.append(row)
-        if current_save:
-            saves.append(current_save)
-
-        # 只保留最近 max_saves 次写入数据
-        if len(saves) >= max_saves:
-            saves = saves[-(max_saves - 1):]  # 保留最近 max_saves-1 次
-
-        # 添加新的写入
-        saves.append(csv_data)
-
-        # 整合所有保存的数据
-        all_data = [row for save in saves for row in save]
-    else:
-        all_data = csv_data
-
-    # 写入数据到文件
+    # 写入数据到文件，覆盖之前的内容
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
-        writer.writerows(all_data)
+        writer.writerows(csv_data)
+
+
 
 
 def refresh_odds_every_second(t):
