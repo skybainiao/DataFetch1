@@ -10,7 +10,7 @@ import threading
 import pandas as pd
 from datetime import datetime
 
-username = "E01AA0NDM1"
+username = "GA1A711D01"
 password = "dddd1111"
 base_url = "https://api.ps3838.com"
 
@@ -230,7 +230,6 @@ def process_and_save_data(football_data, normal_csv, corner_csv):
     save_to_csv(corner_data, columns_corner, corner_csv)
 
 
-
 def save_to_csv(data, columns, filename):
     """
     保存数据到CSV文件，每次写入数据覆盖之前的内容。
@@ -286,8 +285,6 @@ def save_to_csv(data, columns, filename):
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
         writer.writerows(csv_data)
-
-
 
 
 def refresh_odds_every_second(t):
@@ -363,4 +360,4 @@ def send_data(data, server_url):
 
 
 if __name__ == "__main__":
-    refresh_odds_every_second(0.8)
+    refresh_odds_every_second(1)

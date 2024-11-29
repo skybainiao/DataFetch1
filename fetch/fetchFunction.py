@@ -1,4 +1,4 @@
-from datetime import time, datetime
+from datetime import time, datetime, timedelta, timezone
 import pytz
 import requests
 from requests.auth import HTTPBasicAuth
@@ -11,7 +11,7 @@ import json
 
 
 # 使用固定的API账号和密码
-username = "E01AA0NDM1"
+username = "GA1A711D01"
 password = "dddd1111"
 # 基础URL
 base_url = "https://api.ps3838.com"
@@ -582,3 +582,135 @@ def send_data_to_server(data):
             print(f"1号服务器：发送数据失败，状态码: {response.status_code}")
     except Exception as e:
         print(f"1号服务器：发送数据时发生错误: {e}")
+
+
+import requests
+from datetime import datetime
+import pytz
+from dateutil import parser
+import json
+
+
+def get_today_unsettled_fixtures_gmt8():
+    """
+    获取根据GMT+08:00时间的今日所有未结算的足球赛事信息，包括联赛名称、主队和客队名称。
+
+    返回:
+        List[Dict]: 包含联赛名称、主队和客队名称的字典列表。
+    """
+    # API认证信息
+    username = "GA1A711D01"
+    password = "dddd1111"
+
+    # 基础URL和端点
+    base_url = "https://api.ps3838.com"
+    endpoint = "/v3/fixtures"
+    url = f"{base_url}{endpoint}"
+
+    # 请求参数
+    params = {
+        'sportId': 29  # 足球
+    }
+
+    try:
+        # 发送GET请求，使用基本认证
+        response = requests.get(url, auth=(username, password), params=params)
+        response.raise_for_status()  # 如果请求失败，会抛出HTTPError
+    except requests.exceptions.RequestException as e:
+        print(f"请求失败: {e}")
+        return []
+
+    # 解析JSON响应
+    try:
+        data = response.json()
+    except json.JSONDecodeError:
+        print("无法解析API的JSON响应。")
+        return []
+
+    # 确认数据结构
+    if not isinstance(data, dict):
+        print("API响应不是字典结构。")
+        return []
+
+    leagues = data.get('league')
+    if not leagues:
+        print("API响应中没有 'league' 键或 'league' 为空。")
+        return []
+
+    if not isinstance(leagues, list):
+        print("'league' 键的内容不是列表。")
+        return []
+
+    # 定义GMT+08:00时区
+    gmt8 = pytz.timezone('Asia/Shanghai')
+
+    # 获取当前日期（GMT+08:00时间）
+    now_gmt8 = datetime.now(gmt8)
+    today_gmt8 = now_gmt8.date()
+
+    print(f"当前GMT+08:00日期: {today_gmt8}")
+
+    fixtures_today = []
+
+    for league in leagues:
+        league_name = league.get('name', '未知联赛')
+        events = league.get('events', [])
+
+        if not events:
+            print(f"联赛 '{league_name}' 中没有找到赛事。")
+            continue
+
+        print(f"\n正在处理联赛: {league_name}，共有 {len(events)} 场比赛")
+
+        for event in events:
+            starts = event.get('starts')
+            home_team = event.get('home', '未知主队')
+            away_team = event.get('away', '未知客队')
+
+            if not starts:
+                print(f"  赛事 '{home_team} vs {away_team}' 缺少开始时间，跳过。")
+                continue
+
+            try:
+                # 解析比赛开始时间
+                fixture_datetime = parser.isoparse(starts)
+                # 转换为GMT+08:00时间
+                fixture_datetime_gmt8 = fixture_datetime.astimezone(gmt8)
+                fixture_date_gmt8 = fixture_datetime_gmt8.date()
+            except (ValueError, TypeError) as ve:
+                print(f"  日期解析错误: {ve}, 赛事 '{home_team} vs {away_team}' 跳过。")
+                continue
+
+            # 比较日期是否为今天的GMT+08:00时间
+            if fixture_date_gmt8 == today_gmt8:
+                fixtures_today.append({
+                    'league': league_name,
+                    'home_team': home_team,
+                    'away_team': away_team
+                })
+                print(f"  匹配今日赛事: {league_name}: {home_team} vs {away_team}")
+            else:
+                print(f"  不匹配今日日期 ({fixture_date_gmt8}), 跳过。")
+
+    return fixtures_today
+
+
+def display_fixtures(fixtures_today):
+    """
+    显示今日未结算的足球赛事信息。
+
+    Args:
+        fixtures_today (List[Dict]): 今日未结算的足球赛事信息。
+    """
+    if not fixtures_today:
+        print("\n今天没有未结算的足球赛事或获取数据失败。")
+        return
+
+    print("\n根据GMT+08:00时间的今日未结算的足球赛事:")
+    for fixture in fixtures_today:
+        print(f"{fixture['league']}: {fixture['home_team']} vs {fixture['away_team']}")
+
+
+if __name__ == "__main__":
+    fixtures_today = get_today_unsettled_fixtures_gmt8()
+    display_fixtures(fixtures_today)
