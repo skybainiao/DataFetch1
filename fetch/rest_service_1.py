@@ -58,13 +58,13 @@ def contains_exclude_keywords(text):
         bool: 如果包含任意排除关键词，返回True，否则返回False。
     """
     for keyword in EXCLUDE_KEYWORDS:
-        if keyword in text:
+        if keyword.lower() in text.lower():
             return True
     return False
 
 def get_today_unsettled_fixtures():
     """
-    获取今日未结算的足球赛事信息，根据GMT+08:00时间。
+    获取今日未结算的足球赛事信息，根据GMT-4时间。
 
     排除联赛名称或主客队名称中包含 "Corners" 或 "Bookings" 的比赛。
 
@@ -85,16 +85,17 @@ def get_today_unsettled_fixtures():
         logging.error("'league' 键的内容不是列表。")
         return [], 0
 
-    # 定义GMT+08:00时区
-    gmt8 = pytz.timezone('Asia/Shanghai')
+    # 定义GMT-4时区
+    gmt4 = pytz.timezone('America/New_York')
 
-    # 获取当前日期（GMT+08:00时间）
-    now_gmt8 = datetime.now(gmt8)
-    today_gmt8 = now_gmt8.date()
+    # 获取当前日期（GMT-4时间）
+    now_gmt4 = datetime.now(gmt4)
+    today_gmt4 = now_gmt4.date()
 
-    logging.info(f"当前GMT+08:00日期: {today_gmt8}")
+    logging.info(f"当前GMT-4日期: {today_gmt4}")
 
     fixtures_today = []
+    seen_fixtures = set()  # 用于跟踪已见过的比赛
 
     for league in leagues:
         league_name = league.get('name', '未知联赛')
@@ -118,15 +119,15 @@ def get_today_unsettled_fixtures():
             try:
                 # 解析比赛开始时间
                 fixture_datetime = parser.isoparse(starts)
-                # 转换为GMT+08:00时间
-                fixture_datetime_gmt8 = fixture_datetime.astimezone(gmt8)
-                fixture_date_gmt8 = fixture_datetime_gmt8.date()
+                # 转换为GMT-4时间
+                fixture_datetime_gmt4 = fixture_datetime.astimezone(gmt4)
+                fixture_date_gmt4 = fixture_datetime_gmt4.date()
             except (ValueError, TypeError) as ve:
                 logging.error(f"日期解析错误: {ve}, 赛事 '{home_team} vs {away_team}' 跳过。")
                 continue
 
-            # 比较日期是否为今天的GMT+08:00时间
-            if fixture_date_gmt8 == today_gmt8:
+            # 比较日期是否为今天的GMT-4时间
+            if fixture_date_gmt4 == today_gmt4:
                 # 排除包含 "Corners" 或 "Bookings" 的比赛
                 if (contains_exclude_keywords(league_name) or
                     contains_exclude_keywords(home_team) or
@@ -134,15 +135,23 @@ def get_today_unsettled_fixtures():
                     logging.info(f"赛事 '{home_team} vs {away_team}' 包含排除关键词，跳过。")
                     continue
 
+                # 定义比赛的唯一标识
+                fixture_key = (league_name.lower(), home_team.lower(), away_team.lower())
+
+                if fixture_key in seen_fixtures:
+                    logging.info(f"发现重复赛事: {league_name}: {home_team} vs {away_team}，跳过。")
+                    continue  # 跳过重复的比赛
+
                 # 添加到今日未结算的比赛列表
                 fixtures_today.append({
                     'league': league_name,
                     'home_team': home_team,
                     'away_team': away_team
                 })
+                seen_fixtures.add(fixture_key)  # 标记为已见过
                 logging.info(f"匹配今日赛事: {league_name}: {home_team} vs {away_team}")
             else:
-                logging.info(f"赛事日期 ({fixture_date_gmt8}) 不匹配今日日期 ({today_gmt8}), 跳过。")
+                logging.info(f"赛事日期 ({fixture_date_gmt4}) 不匹配今日日期 ({today_gmt4}), 跳过。")
 
     return fixtures_today, len(fixtures_today)
 
@@ -156,6 +165,7 @@ def today_fixtures():
     """
     fixtures, count = get_today_unsettled_fixtures()
     return jsonify({
+        'dataSource': 1,
         'count': count,
         'fixtures': fixtures
     })
