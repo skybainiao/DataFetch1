@@ -40,6 +40,7 @@ def fetch_fixtures():
 
     try:
         data = response.json()
+
         logging.info("成功解析API的JSON响应。")
     except requests.exceptions.JSONDecodeError:
         logging.error("无法解析API的JSON响应。")
@@ -62,6 +63,7 @@ def contains_exclude_keywords(text):
             return True
     return False
 
+
 def get_today_unsettled_fixtures():
     """
     获取今日未结算的足球赛事信息，根据GMT-4时间。
@@ -69,7 +71,7 @@ def get_today_unsettled_fixtures():
     排除联赛名称或主客队名称中包含 "Corners" 或 "Bookings" 的比赛。
 
     返回:
-        list: 今日未结算的比赛列表，每个元素包含联赛名称、主队和客队名称。
+        list: 今日未结算的比赛列表，每个元素包含联赛名称、主队、客队名称、开赛时间及状态。
         int: 今日比赛的数量。
     """
     data = fetch_fixtures()
@@ -85,8 +87,8 @@ def get_today_unsettled_fixtures():
         logging.error("'league' 键的内容不是列表。")
         return [], 0
 
-    # 定义GMT-4时区
-    gmt4 = pytz.timezone('America/New_York')
+    # 定义固定的GMT-4时区
+    gmt4 = pytz.FixedOffset(-240)  # GMT-4对应的偏移量为-240分钟
 
     # 获取当前日期（GMT-4时间）
     now_gmt4 = datetime.now(gmt4)
@@ -102,10 +104,10 @@ def get_today_unsettled_fixtures():
         events = league.get('events', [])
 
         if not events:
-            logging.info(f"联赛 '{league_name}' 中没有找到赛事。")
+            #logging.info(f"联赛 '{league_name}' 中没有找到赛事。")
             continue
 
-        logging.info(f"正在处理联赛: {league_name}，共有 {len(events)} 场比赛")
+        #logging.info(f"正在处理联赛: {league_name}，共有 {len(events)} 场比赛")
 
         for event in events:
             starts = event.get('starts')
@@ -113,17 +115,20 @@ def get_today_unsettled_fixtures():
             away_team = event.get('away', '未知客队')
 
             if not starts:
-                logging.warning(f"赛事 '{home_team} vs {away_team}' 缺少开始时间，跳过。")
+                #logging.warning(f"赛事 '{home_team} vs {away_team}' 缺少开始时间，跳过。")
                 continue
 
             try:
                 # 解析比赛开始时间
                 fixture_datetime = parser.isoparse(starts)
+                if fixture_datetime.tzinfo is None:
+                    # 如果原始时间没有时区信息，假设为UTC
+                    fixture_datetime = fixture_datetime.replace(tzinfo=pytz.UTC)
                 # 转换为GMT-4时间
                 fixture_datetime_gmt4 = fixture_datetime.astimezone(gmt4)
                 fixture_date_gmt4 = fixture_datetime_gmt4.date()
             except (ValueError, TypeError) as ve:
-                logging.error(f"日期解析错误: {ve}, 赛事 '{home_team} vs {away_team}' 跳过。")
+                #logging.error(f"日期解析错误: {ve}, 赛事 '{home_team} vs {away_team}' 跳过。")
                 continue
 
             # 比较日期是否为今天的GMT-4时间
@@ -132,28 +137,40 @@ def get_today_unsettled_fixtures():
                 if (contains_exclude_keywords(league_name) or
                     contains_exclude_keywords(home_team) or
                     contains_exclude_keywords(away_team)):
-                    logging.info(f"赛事 '{home_team} vs {away_team}' 包含排除关键词，跳过。")
+                    #logging.info(f"赛事 '{home_team} vs {away_team}' 包含排除关键词，跳过。")
                     continue
 
                 # 定义比赛的唯一标识
                 fixture_key = (league_name.lower(), home_team.lower(), away_team.lower())
 
                 if fixture_key in seen_fixtures:
-                    logging.info(f"发现重复赛事: {league_name}: {home_team} vs {away_team}，跳过。")
+                    #logging.info(f"发现重复赛事: {league_name}: {home_team} vs {away_team}，跳过。")
                     continue  # 跳过重复的比赛
 
+
+
                 # 添加到今日未结算的比赛列表
-                fixtures_today.append({
+                fixture = {
                     'league': league_name,
                     'home_team': home_team,
-                    'away_team': away_team
-                })
+                    'away_team': away_team,
+                    'time': fixture_datetime_gmt4.strftime('%H:%M'),  # 只保留时分
+
+                }
+                fixtures_today.append(fixture)
                 seen_fixtures.add(fixture_key)  # 标记为已见过
-                logging.info(f"匹配今日赛事: {league_name}: {home_team} vs {away_team}")
+
+                # 输出原始比赛数据到控制台
+                #print("原始赛事数据:", event)
+
+                #logging.info(f"匹配今日赛事: {league_name}: {home_team} vs {away_team}, 开赛时间: {fixture_datetime_gmt4.strftime('%H:%M')}")
             else:
-                logging.info(f"赛事日期 ({fixture_date_gmt4}) 不匹配今日日期 ({today_gmt4}), 跳过。")
+                #logging.info(f"赛事日期 ({fixture_date_gmt4}) 不匹配今日日期 ({today_gmt4}), 跳过。")
+                pass
 
     return fixtures_today, len(fixtures_today)
+
+
 
 @app.route('/today_fixtures', methods=['GET'])
 def today_fixtures():
