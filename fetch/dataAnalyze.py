@@ -1,7 +1,5 @@
 import json
 import os
-from datetime import time
-
 import requests
 from requests.auth import HTTPBasicAuth
 import time
@@ -9,48 +7,42 @@ import csv
 import threading
 import pandas as pd
 from datetime import datetime
+from collections import defaultdict, deque
 
 username = "GA1A711D02"
 password = "dddd1111"
 base_url = "https://api.ps3838.com"
 
+# 全局数据结构：用于存储赔率历史数据 (event_id, bet_type_name) -> { "history": deque, "last_alert_time": float }
+odds_history = defaultdict(lambda: {
+    "history": deque(maxlen=10),  # 最近10次的数据点
+    "last_alert_time": None
+})
 
 def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
-    """
-    获取所有足球联赛的今日滚球比赛，包含每场比赛的赔率信息和比分数据。
-    返回包含比赛、赔率和比分信息的完整数据结构。
-    """
     url_inrunning = f"{base_url}/v2/inrunning"
     url_fixtures = f"{base_url}/v3/fixtures"
     url_odds = f"{base_url}/v3/odds"
 
     try:
-        # 获取今日进行中的比赛信息
         response_inrunning = requests.get(url_inrunning, auth=HTTPBasicAuth(username, password))
-
         if response_inrunning.status_code != 200:
-            print(f"请求滚球比赛数据失败，状态码: {response_inrunning.status_code}")
             return {}
 
         inrunning_data = response_inrunning.json()
         sports = inrunning_data.get('sports', [])
         if not sports:
-            print("没有进行中的足球赛事。")
             return {}
 
         football_data = sports[0]
         leagues = football_data.get('leagues', [])
-
-        # 收集所有进行中的比赛的 event_id
         all_event_ids = [
             event.get('id') for league in leagues for event in league.get('events', []) if event.get('id')
         ]
 
         if not all_event_ids:
-            print("没有进行中的足球赛事。")
             return {}
 
-        # 获取比赛详情
         fixtures_params = {
             "sportId": 29,
             "eventIds": ','.join(map(str, all_event_ids))
@@ -60,16 +52,13 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
         )
 
         if response_fixtures.status_code != 200:
-            print(f"获取比赛详情失败，状态码: {response_fixtures.status_code}")
             return {}
 
         fixtures_data = response_fixtures.json()
         leagues_data = fixtures_data.get('league', [])
         if not leagues_data:
-            print("没有比赛的详细信息。")
             return {}
 
-        # 获取比赛赔率
         odds_params = {
             "sportId": 29,
             "eventIds": ','.join(map(str, all_event_ids)),
@@ -80,7 +69,6 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
         )
 
         if response_odds.status_code != 200:
-            print(f"获取赔率信息失败，状态码: {response_odds.status_code}")
             return {}
 
         odds_data = response_odds.json()
@@ -105,13 +93,11 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
                 away_team = event.get('away', 'Unknown Away Team')
                 start_time = event.get('starts', 'Unknown Start Time')
 
-                # 获取赔率和比分信息
                 odds_info = odds_event_dict.get(event_id, {})
                 periods = odds_info.get('periods', [])
                 home_score = odds_info.get('homeScore', '')
                 away_score = odds_info.get('awayScore', '')
 
-                # 提取赔率信息
                 odds_list = []
                 for period in periods:
                     period_number = period.get('number')
@@ -158,15 +144,12 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
             }
         return result
 
-    except requests.exceptions.RequestException as e:
-        print(f"请求发生错误: {e}")
+    except requests.exceptions.RequestException:
         return {}
 
 
 def process_and_save_data(football_data, normal_csv, corner_csv):
-    """
-    处理足球数据并保存到CSV文件中。
-    """
+    # 为简化，此处不添加监控过程的日志，仅保留数据处理逻辑
     match_count_normal = 0
     match_count_corner = 0
     all_bet_types_normal = set()
@@ -178,7 +161,6 @@ def process_and_save_data(football_data, normal_csv, corner_csv):
     for league_id, league_info in football_data.items():
         league_name = league_info['league_name']
         events = league_info['events']
-
         for event in events:
             home_team = event['home_team']
             away_team = event['away_team']
@@ -217,13 +199,9 @@ def process_and_save_data(football_data, normal_csv, corner_csv):
     bet_type_columns_normal = sorted(all_bet_types_normal, key=lambda x: ('1H' in x, x))
     bet_type_columns_corner = sorted(all_bet_types_corner, key=lambda x: ('1H' in x, x))
 
-    send_data(normal_data, "http://localhost:8080/receive_odds_server1")
-    send_data(corner_data, "http://localhost:8080/receive_corner_odds")
-
-    # 添加 'Timestamp' 到列名
-    columns_normal = ['Timestamp', 'league', 'match_time', 'home_team', 'away_team', 'home_score',
+    columns_normal = ['Timestamp', 'event_id', 'league', 'match_time', 'home_team', 'away_team', 'home_score',
                       'away_score'] + bet_type_columns_normal
-    columns_corner = ['Timestamp', 'league', 'match_time', 'home_team', 'away_team', 'home_score',
+    columns_corner = ['Timestamp', 'event_id', 'league', 'match_time', 'home_team', 'away_team', 'home_score',
                       'away_score'] + bet_type_columns_corner
 
     save_to_csv(normal_data, columns_normal, normal_csv)
@@ -231,21 +209,15 @@ def process_and_save_data(football_data, normal_csv, corner_csv):
 
 
 def save_to_csv(data, columns, filename):
-    """
-    保存数据到CSV文件，每次写入数据覆盖之前的内容。
-    确保 'Timestamp' 已包含在 columns 中。
-    """
     csv_data = []
-
-    # 添加时间戳行，标记此次写入
     timestamp_row = {column: '' for column in columns}
     timestamp_row['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     csv_data.append(timestamp_row)
 
-    # 添加比赛数据
     for league_name, event in data:
         row = {column: '' for column in columns}
-        row['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # 可选：为每行添加时间戳
+        row['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        row['event_id'] = event['event_id']
         row['league'] = league_name
         row['home_team'] = event['home_team']
         row['away_team'] = event['away_team']
@@ -280,19 +252,132 @@ def save_to_csv(data, columns, filename):
 
         csv_data.append(row)
 
-    # 写入数据到文件，覆盖之前的内容
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
         writer.writerows(csv_data)
 
 
-def refresh_odds_every_second(t):
+def monitor_odds(football_data):
     """
-    每秒刷新一次比赛赔率信息，并将数据分别保存为正常比赛和角球比赛的 CSV 文件。
+    对指定比赛(event_id)的所有赔率类型进行监控。
+    我们将会为每一个盘口生成一个bet_type_name，
+    并将其加入odds_history中。
     """
-    print("1网服务器已启动")
+    target_event_id = 1601781448  # 要监控的比赛ID
+    now_ts = time.time()
 
+    #print("\n[监控过程开始] 正在对指定赛事进行盘口监控...")
+
+    target_event_found = False
+
+    for league_id, league_info in football_data.items():
+        for event in league_info['events']:
+            event_id = event['event_id']
+            if event_id == target_event_id:
+                target_event_found = True
+                odds_list = event.get('odds', [])
+                if not odds_list:
+                    print(f"[监控日志] 比赛{event_id}没有赔率数据。")
+                for odds in odds_list:
+                    bet_type = odds.get('betType')
+                    period_number = odds.get('periodNumber', '')
+                    hdp = odds.get('hdp', '')
+                    points = odds.get('points', '')
+
+                    # 根据类型构造唯一bet_type_name
+                    period_str = 'FT' if period_number == 0 else '1H'
+                    if bet_type == 'TOTAL_POINTS' and points != '':
+                        bet_type_name = f"{bet_type}_{period_str}_{points}"
+                    elif bet_type == 'SPREAD' and hdp != '':
+                        bet_type_name = f"{bet_type}_{period_str}_{hdp}"
+                    elif bet_type == 'MONEYLINE':
+                        bet_type_name = f"{bet_type}_{period_str}"
+                    else:
+                        # 对于不满足以上条件的，跳过
+                        continue
+
+                    home_odds = odds.get('homeOdds')
+                    draw_odds = odds.get('drawOdds')
+                    away_odds = odds.get('awayOdds')
+                    over_odds = odds.get('overOdds')
+                    under_odds = odds.get('underOdds')
+
+                    # 对不同betType使用对应的参考值，这里以home_odds为主要监测对象
+                    # 如果是TOTAL_POINTS，可能使用over_odds为监测对象，这里简单化都以home_odds为参考
+                    # (真实情况中可根据业务逻辑选择哪个赔率参考)
+                    ref_odds = home_odds if home_odds is not None else over_odds
+
+                    #print(f"[监控日志] 添加赔率数据: event_id={event_id}, bet_type={bet_type_name}, home_odds={home_odds}, over_odds={over_odds}, time={now_ts}")
+
+                    # 将此赔率加入历史记录
+                    # 这里统一存 home_odds, draw_odds, away_odds以便后续计算
+                    odds_history[(event_id, bet_type_name)]["history"].append(
+                        (now_ts, home_odds, draw_odds, away_odds, over_odds, under_odds)
+                    )
+
+                    # 检查涨幅
+                    check_and_alert(event_id, bet_type_name, time_window=10, threshold=0.03)
+
+    if not target_event_found:
+        print(f"[监控日志] 未找到目标监控的比赛(event_id={target_event_id})。")
+
+    print("[监控过程结束]\n")
+
+
+def check_and_alert(event_id, bet_type_name, time_window, threshold):
+    """
+    检查过去time_window秒内的赔率涨幅，如果超过threshold则告警。
+    此处仍以home_odds为例。
+    """
+    data = odds_history[(event_id, bet_type_name)]
+    history = data["history"]
+
+    # 增加监控过程打印
+    #print(f"  [监控过程] 开始检查涨幅: event_id={event_id}, bet_type={bet_type_name}, 历史点数={len(history)}")
+
+    if len(history) < 2:
+        print("  [监控过程] 历史数据不足(少于2个点)，无法计算涨幅。")
+        return
+
+    current_time, current_home_odds, current_draw_odds, current_away_odds, current_over_odds, current_under_odds = history[-1]
+
+    # 当前以home_odds为基准进行涨幅计算，如无home_odds则可选择over_odds等
+    base_current_odds = current_home_odds if current_home_odds is not None else current_over_odds
+    if base_current_odds is None:
+        print("  [监控过程] 当前点无有效参考赔率数据，无法计算涨幅。")
+        return
+
+    # 寻找time_window秒前的点
+    old_index = None
+    for i in range(len(history) - 1, -1, -1):
+        if current_time - history[i][0] >= time_window:
+            old_index = i
+            break
+
+    if old_index is None:
+        print(f"  [监控过程] 没有>= {time_window}秒前的历史点进行对比。")
+        return
+
+    _, old_home_odds, _, _, old_over_odds, _ = history[old_index]
+    base_old_odds = old_home_odds if old_home_odds is not None else old_over_odds
+    if base_old_odds is None or base_old_odds == 0:
+        print("  [监控过程] 历史对比点无有效参考赔率或为0，无法计算涨幅。")
+        return
+
+    growth_rate = (base_current_odds - base_old_odds) / base_old_odds
+    print(f"  [监控过程] {time_window}秒前赔率={base_old_odds}, 当前赔率={base_current_odds}, 涨幅={growth_rate*100:.2f}%")
+
+    if growth_rate > threshold:
+        now = time.time()
+        if data["last_alert_time"] is None or (now - data["last_alert_time"] > 300):
+            print(f"  [监控告警] Event {event_id}, {bet_type_name}快速涨幅！当前: {base_current_odds}, 过去: {base_old_odds}, 涨幅: {growth_rate*100:.2f}%")
+            data["last_alert_time"] = now
+    else:
+        print("  [监控过程] 涨幅未达到告警阈值。")
+
+
+def refresh_odds_every_second(t):
     def fetch_and_process_odds():
         while True:
             try:
@@ -300,14 +385,17 @@ def refresh_odds_every_second(t):
                 if football_data:
                     process_and_save_data(
                         football_data,
-                        'football_odds_normal.csv',
-                        'football_odds_corners.csv'
+                        'ft_normal.csv',
+                        'ft_corners.csv'
                     )
+                    # 增加监控逻辑，仅对监控过程做详细日志
+                    monitor_odds(football_data)
                 else:
-                    print("目前没有滚球赛事。")
+                    # 没有数据时，只需等待
+                    time.sleep(t)
+                    continue
                 time.sleep(t)
             except KeyboardInterrupt:
-                print("停止刷新赔率信息。")
                 break
             except Exception as e:
                 print(f"发生错误: {e}")
@@ -321,42 +409,7 @@ def refresh_odds_every_second(t):
         while True:
             time.sleep(t)
     except KeyboardInterrupt:
-        print("主程序已停止。")
-
-
-def send_data(data, server_url):
-    """
-    将处理后的足球数据发送到Java服务器。
-    :param data: 处理后的数据列表（normal_data） (列表中的元素是元组 (league_name, event))
-    :param server_url: Java服务器的URL
-    """
-    formatted_data = [
-        {
-            "leagueName": league_name,  # 从元组中解包联赛名称
-            "eventId": event['event_id'],
-            "matchTime": event['start_time'],
-            "homeTeam": event['home_team'],
-            "awayTeam": event['away_team'],
-            "homeScore": event.get('home_score', 0),
-            "awayScore": event.get('away_score', 0),
-            "odds": [odds for odds in event.get('odds', [])]  # 确保odds为数组格式
-        }
-        for league_name, event in data  # data是一个包含 (league_name, event) 元组的列表
-    ]
-
-    try:
-        headers = {'Content-Type': 'application/json'}
-        response = requests.post(server_url, data=json.dumps(formatted_data), headers=headers)
-
-        if response.status_code == 200:
-            #print("数据成功发送到Java服务器:", response.json())
-            pass
-        else:
-            print(f"发送数据失败，状态码: {response.status_code}, 响应: {response.text}")
-    except requests.exceptions.RequestException as e:
-        print(f"发送数据时发生错误: {e}")
-    except json.JSONDecodeError as e:
-        print(f"解析服务器响应时发生错误: {e}")
+        pass
 
 
 if __name__ == "__main__":
