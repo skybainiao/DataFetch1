@@ -15,11 +15,11 @@ base_url = "https://api.ps3838.com"
 
 # 全局数据结构：用于存储赔率历史数据 (event_id, bet_type_name) -> { "history": deque, "last_alert_time": float }
 odds_history = defaultdict(lambda: {
-    "history": deque(maxlen=10),  # 最近10次的数据点
+    "history": deque(maxlen=10),
     "last_alert_time": None
 })
 
-def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
+def getFootball_today_info_with_odds_ForServer(odds_format="Malay"):
     url_inrunning = f"{base_url}/v2/inrunning"
     url_fixtures = f"{base_url}/v3/fixtures"
     url_odds = f"{base_url}/v3/odds"
@@ -149,7 +149,6 @@ def getFootball_today_info_with_odds_ForServer(odds_format="Decimal"):
 
 
 def process_and_save_data(football_data, normal_csv, corner_csv):
-    # 为简化，此处不添加监控过程的日志，仅保留数据处理逻辑
     match_count_normal = 0
     match_count_corner = 0
     all_bet_types_normal = set()
@@ -260,95 +259,74 @@ def save_to_csv(data, columns, filename):
 
 def monitor_odds(football_data):
     """
-    对指定比赛(event_id)的所有赔率类型进行监控。
-    我们将会为每一个盘口生成一个bet_type_name，
-    并将其加入odds_history中。
+    监控所有比赛的所有盘口所有赔率。
+    不再限定特定 event_id，而是对获取到的所有 event_id 全部监控。
     """
-    target_event_id = 1601781448  # 要监控的比赛ID
+
     now_ts = time.time()
 
-    #print("\n[监控过程开始] 正在对指定赛事进行盘口监控...")
-
-    target_event_found = False
-
+    # 遍历所有联赛与比赛
     for league_id, league_info in football_data.items():
         for event in league_info['events']:
             event_id = event['event_id']
-            if event_id == target_event_id:
-                target_event_found = True
-                odds_list = event.get('odds', [])
-                if not odds_list:
-                    print(f"[监控日志] 比赛{event_id}没有赔率数据。")
-                for odds in odds_list:
-                    bet_type = odds.get('betType')
-                    period_number = odds.get('periodNumber', '')
-                    hdp = odds.get('hdp', '')
-                    points = odds.get('points', '')
+            odds_list = event.get('odds', [])
+            if not odds_list:
+                # 如果该比赛没有赔率数据，继续下一个比赛
+                continue
 
-                    # 根据类型构造唯一bet_type_name
-                    period_str = 'FT' if period_number == 0 else '1H'
-                    if bet_type == 'TOTAL_POINTS' and points != '':
-                        bet_type_name = f"{bet_type}_{period_str}_{points}"
-                    elif bet_type == 'SPREAD' and hdp != '':
-                        bet_type_name = f"{bet_type}_{period_str}_{hdp}"
-                    elif bet_type == 'MONEYLINE':
-                        bet_type_name = f"{bet_type}_{period_str}"
-                    else:
-                        # 对于不满足以上条件的，跳过
-                        continue
+            # 对当前比赛的所有赔率进行记录并检查
+            for odds in odds_list:
+                bet_type = odds.get('betType')
+                period_number = odds.get('periodNumber', '')
+                hdp = odds.get('hdp', '')
+                points = odds.get('points', '')
 
-                    home_odds = odds.get('homeOdds')
-                    draw_odds = odds.get('drawOdds')
-                    away_odds = odds.get('awayOdds')
-                    over_odds = odds.get('overOdds')
-                    under_odds = odds.get('underOdds')
+                period_str = 'FT' if period_number == 0 else '1H'
+                if bet_type == 'TOTAL_POINTS' and points != '':
+                    bet_type_name = f"{bet_type}_{period_str}_{points}"
+                elif bet_type == 'SPREAD' and hdp != '':
+                    bet_type_name = f"{bet_type}_{period_str}_{hdp}"
+                elif bet_type == 'MONEYLINE':
+                    bet_type_name = f"{bet_type}_{period_str}"
+                else:
+                    # 不符合这几类的盘口目前不处理
+                    continue
 
-                    # 对不同betType使用对应的参考值，这里以home_odds为主要监测对象
-                    # 如果是TOTAL_POINTS，可能使用over_odds为监测对象，这里简单化都以home_odds为参考
-                    # (真实情况中可根据业务逻辑选择哪个赔率参考)
-                    ref_odds = home_odds if home_odds is not None else over_odds
+                home_odds = odds.get('homeOdds')
+                draw_odds = odds.get('drawOdds')
+                away_odds = odds.get('awayOdds')
+                over_odds = odds.get('overOdds')
+                under_odds = odds.get('underOdds')
 
-                    #print(f"[监控日志] 添加赔率数据: event_id={event_id}, bet_type={bet_type_name}, home_odds={home_odds}, over_odds={over_odds}, time={now_ts}")
+                # 加入历史记录
+                odds_history[(event_id, bet_type_name)]["history"].append(
+                    (now_ts, home_odds, draw_odds, away_odds, over_odds, under_odds)
+                )
 
-                    # 将此赔率加入历史记录
-                    # 这里统一存 home_odds, draw_odds, away_odds以便后续计算
-                    odds_history[(event_id, bet_type_name)]["history"].append(
-                        (now_ts, home_odds, draw_odds, away_odds, over_odds, under_odds)
-                    )
-
-                    # 检查涨幅
-                    check_and_alert(event_id, bet_type_name, time_window=10, threshold=0.03)
-
-    if not target_event_found:
-        print(f"[监控日志] 未找到目标监控的比赛(event_id={target_event_id})。")
-
-    print("[监控过程结束]\n")
+                # 假设阈值2点位作为示例，可自行调整
+                check_and_alert(event_id, bet_type_name, time_window=10, threshold=2)
 
 
 def check_and_alert(event_id, bet_type_name, time_window, threshold):
     """
-    检查过去time_window秒内的赔率涨幅，如果超过threshold则告警。
-    此处仍以home_odds为例。
+    与之前逻辑相同：对TOTAL_POINTS, SPREAD, MONEYLINE分别检查其对应的赔率字段，
+    如果发生正向涨幅且超过threshold的点位变化，则告警。
+
+    点位 = (当前赔率 - 过去赔率)*100
+    当当前赔率 > 过去赔率且点位 > threshold时告警。
+
+    告警信息中输出具体的赔率名称和从旧值到新值的变化情况。
     """
     data = odds_history[(event_id, bet_type_name)]
     history = data["history"]
 
-    # 增加监控过程打印
-    #print(f"  [监控过程] 开始检查涨幅: event_id={event_id}, bet_type={bet_type_name}, 历史点数={len(history)}")
-
     if len(history) < 2:
-        print("  [监控过程] 历史数据不足(少于2个点)，无法计算涨幅。")
         return
 
-    current_time, current_home_odds, current_draw_odds, current_away_odds, current_over_odds, current_under_odds = history[-1]
+    (current_time, current_home_odds, current_draw_odds,
+     current_away_odds, current_over_odds, current_under_odds) = history[-1]
 
-    # 当前以home_odds为基准进行涨幅计算，如无home_odds则可选择over_odds等
-    base_current_odds = current_home_odds if current_home_odds is not None else current_over_odds
-    if base_current_odds is None:
-        print("  [监控过程] 当前点无有效参考赔率数据，无法计算涨幅。")
-        return
-
-    # 寻找time_window秒前的点
+    # 找 time_window秒前的数据点
     old_index = None
     for i in range(len(history) - 1, -1, -1):
         if current_time - history[i][0] >= time_window:
@@ -356,29 +334,49 @@ def check_and_alert(event_id, bet_type_name, time_window, threshold):
             break
 
     if old_index is None:
-        print(f"  [监控过程] 没有>= {time_window}秒前的历史点进行对比。")
         return
 
-    _, old_home_odds, _, _, old_over_odds, _ = history[old_index]
-    base_old_odds = old_home_odds if old_home_odds is not None else old_over_odds
-    if base_old_odds is None or base_old_odds == 0:
-        print("  [监控过程] 历史对比点无有效参考赔率或为0，无法计算涨幅。")
-        return
+    (old_time, old_home_odds, old_draw_odds,
+     old_away_odds, old_over_odds, old_under_odds) = history[old_index]
 
-    growth_rate = (base_current_odds - base_old_odds) / base_old_odds
-    print(f"  [监控过程] {time_window}秒前赔率={base_old_odds}, 当前赔率={base_current_odds}, 涨幅={growth_rate*100:.2f}%")
+    # 解析盘口类型
+    bet_info = bet_type_name.split('_')
+    bet_type = bet_info[0]  # TOTAL_POINTS, SPREAD, MONEYLINE
 
-    if growth_rate > threshold:
-        now = time.time()
-        if data["last_alert_time"] is None or (now - data["last_alert_time"] > 300):
-            print(f"  [监控告警] Event {event_id}, {bet_type_name}快速涨幅！当前: {base_current_odds}, 过去: {base_old_odds}, 涨幅: {growth_rate*100:.2f}%")
-            data["last_alert_time"] = now
+    def check_and_alert_single_odds(odds_name, old_value, new_value):
+        if old_value is None or new_value is None:
+            return
+        if new_value > old_value:
+            diff_points = (new_value - old_value) * 100
+            if diff_points > threshold:
+                now = time.time()
+                if data["last_alert_time"] is None or (now - data["last_alert_time"] > 300):
+                    print(f"[告警] {time_window}秒内涨幅{diff_points:.2f}个点位 "
+                          f"(Event {event_id}, {bet_type_name}, {odds_name}从{old_value}涨到了{new_value})")
+                    data["last_alert_time"] = now
+
+    if bet_type == "TOTAL_POINTS":
+        check_and_alert_single_odds("OverOdds", old_over_odds, current_over_odds)
+        check_and_alert_single_odds("UnderOdds", old_under_odds, current_under_odds)
+    elif bet_type == "SPREAD":
+        check_and_alert_single_odds("HomeOdds", old_home_odds, current_home_odds)
+        check_and_alert_single_odds("AwayOdds", old_away_odds, current_away_odds)
+    elif bet_type == "MONEYLINE":
+        check_and_alert_single_odds("HomeOdds", old_home_odds, current_home_odds)
+        check_and_alert_single_odds("DrawOdds", old_draw_odds, current_draw_odds)
+        check_and_alert_single_odds("AwayOdds", old_away_odds, current_away_odds)
     else:
-        print("  [监控过程] 涨幅未达到告警阈值。")
+        # 未知类型可忽略或扩展
+        pass
+
+
+
+
 
 
 def refresh_odds_every_second(t):
     def fetch_and_process_odds():
+        print('监控模块已启动')
         while True:
             try:
                 football_data = getFootball_today_info_with_odds_ForServer()
@@ -388,10 +386,8 @@ def refresh_odds_every_second(t):
                         'ft_normal.csv',
                         'ft_corners.csv'
                     )
-                    # 增加监控逻辑，仅对监控过程做详细日志
                     monitor_odds(football_data)
                 else:
-                    # 没有数据时，只需等待
                     time.sleep(t)
                     continue
                 time.sleep(t)
